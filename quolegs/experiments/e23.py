@@ -138,10 +138,13 @@ def run_e23(results, out_dir, n_perm=100, workers=None):
     e2["paired_full"] = _eval_block(D, yd, gd, "content, paired difference", n_perm=n_perm)
     # control: W vs S with the shape-agnostic features
     ctrl_rows = [r for r in rows if r["name"] == "W" or r["self"] == 1]
-    Xw = np.stack([content_features(r["view"], with_probe=False) for r in ctrl_rows])
+    Xw = np.stack([content_features(r["view"], with_probe=False, with_activations=False) for r in ctrl_rows])
     yw = np.array([int(r["self"] == 1) for r in ctrl_rows])
     gw = np.array([r["run"] for r in ctrl_rows])
-    e2["control_W_vs_S"] = _eval_block(Xw, yw, gw, "control: W vs S, shape-agnostic content")
+    e2["control_W_vs_S"] = _eval_block(Xw, yw, gw, "control: W vs S, spectra+biases only")
+    # same restricted feature set on S vs O, so the control and the test are comparable
+    Xso = np.stack([content_features(r["view"], with_probe=False, with_activations=False) for r in SO])
+    e2["unpaired_spectra_biases"] = _eval_block(Xso, y, groups, "content, spectra+biases only (same as control)")
     e2["headline_acc"] = max(e2["unpaired_full"]["acc"], e2["paired_full"]["acc"])
     e2["pass"] = bool(e2["headline_acc"] < 0.6 and e2["control_W_vs_S"]["acc"] > 0.9)
     out["e2"] = e2

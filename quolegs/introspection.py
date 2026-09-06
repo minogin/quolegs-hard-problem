@@ -73,11 +73,12 @@ def _pad_sorted(v, L=PAD, desc=True):
     return out
 
 
-def content_features(view: ModelView, with_probe=True) -> np.ndarray:
+def content_features(view: ModelView, with_probe=True, with_activations=True) -> np.ndarray:
     """Permutation-invariant summary of what the model is.
 
-    with_probe=False drops the probe outputs; needed for the W-vs-S control, where the probe set does
-    not fit W's input and only the shape-agnostic part (spectra, biases, activation stats) is comparable."""
+    with_probe=False drops the probe outputs, with_activations=False drops the hidden-activation stats;
+    both are needed for the W-vs-S control, where the probe set does not fit W's input and only the
+    shape-agnostic part (spectra, biases) is comparable."""
     W1, b1, W2, b2, W3, b3 = view.params
     feats = []
     for W in (W1, W2, W3):
@@ -87,7 +88,7 @@ def content_features(view: ModelView, with_probe=True) -> np.ndarray:
     for b in (b1, b2, b3):
         feats.append(_pad_sorted(b, PAD))                       # biases, sorted
         feats.append([b.mean(), b.std()])
-    if view.h1 is not None:
+    if with_activations and view.h1 is not None:
         for h in (view.h1, view.h2):
             feats.append(_pad_sorted(h.mean(0), PAD))           # per-neuron mean activation, sorted
             feats.append(_pad_sorted(h.std(0), PAD))
