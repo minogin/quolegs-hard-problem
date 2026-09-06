@@ -1,4 +1,9 @@
-"""Simulation loop: two symmetric quolegs in one world. Produces RunResult with logs and model params."""
+"""Simulation loop: two symmetric quolegs in one world. Produces RunResult with logs and model params.
+
+This is where the two data streams are built. `internal_state` of agent A and `perceived_other` of
+agent B are the same numbers taken from the same array: the streams are identical by construction,
+not merely "of equal quality". Experiments hook in through `callbacks`; the loop itself knows nothing
+about them."""
 import copy
 from dataclasses import dataclass, field
 
@@ -13,22 +18,25 @@ from .wiring import DEFAULT_WIRING
 
 @dataclass
 class RunResult:
+    """Everything an experiment needs after a run; this is what gets pickled to disk."""
     cfg: dict
     wirings: list
-    logs: dict                      # name -> array (T, N_AGENTS)
+    logs: dict                      # name -> array (T, N_AGENTS): energy, action, died, driver, err/*, upd/*, xerr/*
     params: dict                    # agent idx -> {model name -> [W1,b1,W2,b2,W3,b3]}
-    buffers: dict                   # agent idx -> {model name -> (x, y) sample}
+    buffers: dict                   # agent idx -> {model name -> (x, y) sample}, for the stream-equality check
     model_names: list               # per agent, model names in wiring order
     meta: dict = field(default_factory=dict)
 
 
 class Simulation:
     def __init__(self, rc: RunConfig, wirings=None):
-        torch.set_num_threads(1)
+        torch.set_num_threads(1)    # runs are executed many at a time in separate processes
         self.rc = rc
         wirings = wirings or [DEFAULT_WIRING, DEFAULT_WIRING]
         self.wirings = [copy.deepcopy(w) for w in wirings]
+        # Every random choice descends from rc.seed -> a run is exactly reproducible.
         self.rng = np.random.default_rng(rc.seed)
+        # Separate stream for E5 noise so that turning noise on does not shift the other randomness.
         self.noise_rng = np.random.default_rng(rc.seed + 7_000_000)
         self.env = GridWorld(rc.env, self.rng)
         self.agents = [Quoleg(i, rc.agent, self.wirings[i], self.env.obs_dim, seed=rc.seed * 100 + i)
@@ -39,14 +47,15 @@ class Simulation:
 
     # --- streams ----------------------------------------------------------
     def _noise(self, i):
+        """Interoceptive noise on the own-state stream (E5 only; zero by default)."""
         s = self.rc.agent.self_noise
         if s <= 0:
             return 0.0
         return (s * self.noise_rng.standard_normal(STATE_DIM)).astype(np.float32)
 
     def _sources(self):
-        """Per agent: internal_state = own exact state (+ interoceptive noise if configured),
-        perceived_other = the other's exact state. Same format, same quality."""
+        """Per agent: internal_state = own exact state (+ noise if configured), perceived_other = the
+        other's exact state. Both come from the same arrays through the same function."""
         state = [self.env.state_vec(i) for i in range(N_AGENTS)]
         obs = [self.env.obs(i) for i in range(N_AGENTS)]
         self.obs_now = obs
@@ -60,6 +69,7 @@ class Simulation:
         return out
 
     def _outcome(self, outcome_states):
+        """Same split for the tick's results (pre-respawn states, see env.step / D5)."""
         out = []
         for i in range(N_AGENTS):
             j = 1 - i
@@ -71,6 +81,8 @@ class Simulation:
 
     # --- stepping ---------------------------------------------------------
     def step(self, callbacks=()):
+        """One tick: hooks -> both agents choose (simultaneously, from time-t streams) -> world steps
+        once -> both agents learn. Nobody moves first, so A and B stay symmetric."""
         for cb in callbacks:
             cb(self)
         actions = [ag.act(self.cur[i]) for i, ag in enumerate(self.agents)]
@@ -78,6 +90,7 @@ class Simulation:
         outcome_states, died = self.env.step(actions)
         nxt = self._sources()
         outcome = self._outcome(outcome_states)
+        # `driver` = index of the model the planner consulted this tick (needed by E4, where it jumps).
         rec = {"energy": self.env.energy.copy(), "action": np.array(actions), "died": died.astype(np.float32),
                "driver": np.array([list(ag.wiring).index(ag.driver) for ag in self.agents], dtype=np.float32)}
         per_agent = [ag.learn(self.cur[i], actions, outcome[i], obs_t[i], self.obs_now[i])
@@ -90,6 +103,7 @@ class Simulation:
         return rec
 
     def run(self, steps: int, callbacks=()):
+        """Can be called repeatedly; logs keep accumulating (E1 trains, rewires, then continues)."""
         for _ in range(steps):
             self.step(callbacks)
         return self
