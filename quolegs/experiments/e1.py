@@ -55,7 +55,11 @@ def e1_single(seed, train_steps, e1a_steps, e1b_steps, eval_every, base_cfg: dic
         "errO_int_after": float(L["xerr/O/internal_state"][after, 0].mean()),
         "errO_perc_before": float(L["xerr/O/perceived_other"][before, 0].mean()),
         "errO_perc_after": float(L["xerr/O/perceived_other"][after, 0].mean()),
-        "series": {k: L[k][:, 0].copy() for k in ("energy", "xerr/S/internal_state", "xerr/O/internal_state")},
+        # control error (D12): prediction under *my* command vs fact on the model's own stream
+        "cerrS_before": float(L["cerr/S"][before, 0].mean()), "cerrS_after": float(L["cerr/S"][after, 0].mean()),
+        "cerrO_before": float(L["cerr/O"][before, 0].mean()), "cerrO_after": float(L["cerr/O"][after, 0].mean()),
+        "series": {k: L[k][:, 0].copy() for k in ("energy", "xerr/S/internal_state", "xerr/O/internal_state",
+                                                  "cerr/S", "cerr/O")},
     }
 
     # ---- E1b: rewire O onto internal_state ------------------------------
@@ -131,6 +135,10 @@ def run_e1(out_dir, base_cfg: RunConfig, seeds, train_steps, e1a_steps=1500, e1b
                                     "O on internal": r0["xerr/O/internal_state"]},
                                    os.path.join(out_dir, "e1a_err.png"), title="E1a: error on internal_state",
                                    ylabel="MSE", vlines=[train_steps], logy=True)
+    plots["e1a_cerr"] = plot_series({"S under my command": r0["cerr/S"], "O under my command": r0["cerr/O"]},
+                                    os.path.join(out_dir, "e1a_control_error.png"),
+                                    title="E1a: control error (D12) - does my command cause what the model predicts?",
+                                    ylabel="MSE", vlines=[train_steps], logy=True)
     plots["e1b"] = plot_curves({"O(trained) vs S, real inputs": (x, e1b["trained"]["curve_real"]),
                                 "O(fresh) vs S, real inputs": (x, e1b["fresh"]["curve_real"]),
                                 "O(fresh) vs S, probe inputs": (x, e1b["fresh"]["curve_probe"])},

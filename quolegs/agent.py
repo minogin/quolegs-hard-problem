@@ -121,6 +121,11 @@ class Quoleg:
             for sname, s in sources.items():
                 xs = self.agent_input(s.state, a_oh[s.actor], s.obs)
                 rec[f"xerr/{name}/{sname}"] = m.error(xs, outcome[sname])
+            # Control error (D12): the model's prediction under *my* command vs the fact on its own stream.
+            # "Does my command cause what this model predicts?" For a model wired to me it does; for a
+            # model wired to the other it does not. Logged only; not handed to introspection by default.
+            xc = self.agent_input(src.state, a_oh[self.idx], src.obs)
+            rec[f"cerr/{name}"] = m.error(xc, y)
             rec[f"err/{name}"] = rec[f"xerr/{name}/{w['input']}"] if w["input"] == w["target"] else m.error(x, y)
             m.push(x, y)
             rec[f"upd/{name}"] = m.train_step()
