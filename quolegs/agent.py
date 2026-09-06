@@ -23,10 +23,11 @@ class Source:
     actor: int
     state: np.ndarray   # (STATE_DIM,) = pos_enc(4) + energy(1)
     obs: np.ndarray     # (obs_dim,)   = food window + other-agent window
+    last_action: int = 0   # that actor's previous command (the "copy of the last command" in the spec)
 
 
 class Quoleg:
-    def __init__(self, idx: int, cfg: AgentConfig, wiring: dict, obs_dim: int, seed: int):
+    def __init__(self, idx: int, cfg: AgentConfig, wiring: dict, obs_dim: int, seed: int, grid_n: int = 16):
         self.idx = idx
         self.cfg = cfg
         self.wiring = validate(copy.deepcopy(wiring))
@@ -40,6 +41,8 @@ class Quoleg:
         self.models = {name: Predictor(in_dim, STATE_DIM, cfg.model, seed * 10 + 2 + j)
                        for j, name in enumerate(self.wiring)}
         self.rng = np.random.default_rng(seed)
+        self._grid_n = grid_n
+        self._sources_cache = None
         # All action sequences of length `horizon` (5^H of them), precomputed once.
         seqs = np.array(list(itertools.product(range(N_ACTIONS), repeat=cfg.horizon)), dtype=np.int64)
         self.seqs = seqs
@@ -73,13 +76,58 @@ class Quoleg:
         state = np.repeat(src.state[None], B, 0)
         obs = np.repeat(src.obs[None], B, 0)
         score = np.zeros(B, dtype=np.float64)
+        other = self._other_rollout_setup(src) if self.cfg.use_other_in_planning else None
         for h in range(H):
             a = self.seq_onehot[:, h]
+            if other is not None:
+                obs = self._discount_other_food(obs, state, other, h)
             state = model.predict(self.agent_input(state, a, obs))
             score += self.gammas[h] * state[:, STATE_DIM - 1]   # last state component = energy
             if h < H - 1:
                 obs = self.W.predict(np.concatenate([obs, a], axis=1))
         return score
+
+    # --- optional: use the other-model in planning (D13) ------------------
+    def _other_rollout_setup(self, src: Source):
+        """Find the model wired to a *different* stream than the planner's and roll that stream forward,
+        assuming its actor repeats its last command. Returns predicted states per horizon step, or None."""
+        drv_in = self.wiring[self.driver]["input"]
+        names = [n for n, w in self.wiring.items() if w["input"] != drv_in]
+        if not names:
+            return None
+        name = names[0]
+        osrc = self._sources_cache[self.wiring[name]["input"]]
+        m = self.models[name]
+        st = osrc.state[None].copy()
+        a = onehot(np.array([osrc.last_action]))
+        ob = osrc.obs[None]
+        preds = []
+        for h in range(self.seq_onehot.shape[1]):
+            st = m.predict(self.agent_input(st, a, ob))
+            preds.append(st[0])
+            ob = self.W.predict(np.concatenate([ob, a], axis=1))
+        return preds
+
+    def _discount_other_food(self, obs, state, other_preds, h):
+        """Zero the food cell the other agent is predicted to occupy at step h, if it lies in my window."""
+        n = self._grid_n
+        k = int(np.sqrt(self.food_dim))
+        r = k // 2
+        def decode(st):
+            x = np.round(np.arctan2(st[..., 1], st[..., 0]) / (2 * np.pi) * n).astype(np.int64) % n
+            y = np.round(np.arctan2(st[..., 3], st[..., 2]) / (2 * np.pi) * n).astype(np.int64) % n
+            return x, y
+        mx, my = decode(state)                    # (B,)
+        ox, oy = decode(other_preds[h])           # scalars
+        dx = (ox - mx + r) % n
+        dy = (oy - my + r) % n
+        inside = (dx < k) & (dy < k)
+        if not np.any(inside):
+            return obs
+        obs = obs.copy()
+        idx = np.flatnonzero(inside)
+        obs[idx, dx[idx] * k + dy[idx]] = 0.0
+        return obs
 
     def act(self, sources: dict) -> int:
         """Pick an action: epsilon-greedy exploration (D10), otherwise the first step of the best plan.
@@ -91,6 +139,7 @@ class Quoleg:
             return int(self.rng.integers(N_ACTIONS))
         name = self.driver
         src = sources[self.wiring[name]["input"]]
+        self._sources_cache = sources
         score = self.plan_scores(self.models[name], src)
         score = score + 1e-6 * self.rng.random(len(score))
         return int(self.seqs[int(np.argmax(score)), 0])

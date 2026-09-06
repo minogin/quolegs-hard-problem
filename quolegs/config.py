@@ -29,6 +29,7 @@ class AgentConfig:
     epsilon: float = 0.1
     model: ModelConfig = field(default_factory=ModelConfig)
     self_noise: float = 0.0      # E5: gaussian noise on the internal_state stream (interoception)
+    use_other_in_planning: bool = False  # D13: planner discounts food the other agent is predicted to reach first
 
 
 @dataclass

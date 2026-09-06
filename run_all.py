@@ -71,7 +71,7 @@ def main():
         print("E1:", json.dumps({k: v for k, v in res.items() if k != "plots"}, indent=1, default=_json_default), flush=True)
         save()
 
-    if "e23" in stages or "e4" in stages or "e5" in stages:
+    if "e23" in stages or "e2v" in stages or "e4" in stages or "e5" in stages:
         from quolegs.experiments.common import run_batch
         jobs = [(with_updates(base, seed=1000 + s), [DEFAULT_WIRING, DEFAULT_WIRING], {}) for s in range(M)]
         baseline_runs = run_batch(jobs, args.workers, cache_dir=os.path.join(out, "runs_baseline"), label="baseline")
@@ -81,6 +81,14 @@ def main():
         res = run_e23(baseline_runs, os.path.join(out, "e23"), n_perm=n_perm)
         results["e23"] = res
         print("E2/E3:", json.dumps({k: v for k, v in res.items() if k != "plots"}, indent=1, default=_json_default), flush=True)
+        save()
+
+    if "e2v" in stages:
+        from quolegs.experiments.e2_variants import run_e2_variants
+        res = run_e2_variants(os.path.join(out, "e2_variants"), base, n_runs=12 if quick else 100,
+                              workers=args.workers, baseline_runs=baseline_runs, n_perm=n_perm)
+        results["e2_variants"] = res
+        print("E2 variants:", json.dumps({k: v for k, v in res.items() if k != "plots"}, indent=1, default=_json_default), flush=True)
         save()
 
     if "e4" in stages:

@@ -39,8 +39,8 @@ class Simulation:
         # Separate stream for E5 noise so that turning noise on does not shift the other randomness.
         self.noise_rng = np.random.default_rng(rc.seed + 7_000_000)
         self.env = GridWorld(rc.env, self.rng)
-        self.agents = [Quoleg(i, rc.agent, self.wirings[i], self.env.obs_dim, seed=rc.seed * 100 + i)
-                       for i in range(N_AGENTS)]
+        self.agents = [Quoleg(i, rc.agent, self.wirings[i], self.env.obs_dim, seed=rc.seed * 100 + i,
+                              grid_n=rc.env.n) for i in range(N_AGENTS)]
         self.t = 0
         self.records = []
         self.cur = self._sources()
@@ -62,9 +62,10 @@ class Simulation:
         out = []
         for i in range(N_AGENTS):
             j = 1 - i
+            la = self.env.last_action
             out.append({
-                "internal_state": Source(i, state[i] + self._noise(i), obs[i]),
-                "perceived_other": Source(j, state[j], obs[j]),
+                "internal_state": Source(i, state[i] + self._noise(i), obs[i], int(la[i])),
+                "perceived_other": Source(j, state[j], obs[j], int(la[j])),
             })
         return out
 
